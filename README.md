@@ -1,2 +1,2 @@
-bakapara
+Bakapara client for IPython clusters
 ========
