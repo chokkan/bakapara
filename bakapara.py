@@ -10,14 +10,12 @@ the file COPYING, distributed as part of this software.
 """
 
 import datetime
+import os
+import socket
 import sys
 import time
 from IPython.core.display import clear_output
 from IPython.parallel import Client, TimeoutError
-
-def gethostname():
-    import socket
-    return socket.getfqdn()
 
 def runjob(job):
     import os
@@ -25,20 +23,27 @@ def runjob(job):
     import socket
     from IPython.parallel.error import UnmetDependency
 
-    # Determine if this engine (host) can run the job.
+    # Determine if this engine (host) can accept the job.
     if 'host' in job and socket.getfqdn() not in job['host']:
-        # UnmetDependency exception forces the scheduler to submit the task to a different engine.
+        # UnmetDependency exception forces the scheduler to resubmit the task to a different engine.
         raise UnmetDependency
 
     # Make sure that 'cmd' field exists in the job.
     if 'cmd' not in job:
         return dict(error='"cmd" field does not exist in the job')
 
+    # Change the working directory if specified.
+    if 'cd' in job:
+        os.chdir(job['cd'])
+
+    # Set stdout and stderr file objects if specified.
+    stdout = open(job['out'], 'w') if 'out' in job else None
+    stderr = open(job['err'], 'w') if 'err' in job else None
+
     # Run the command.
     try:
-        p = subprocess.Popen(job['cmd'], shell=True, preexec_fn=os.setsid, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout_data, stderr_data = p.communicate()
-        return dict(stdout=stdout_data, stderr=stderr_data, code=p.returncode)
+        returncode = subprocess.call(job['cmd'], shell=True, stdout=stdout, stderr=stderr)
+        return dict(code=returncode)
     except OSError, e:
         return dict(error=str(e))
 
@@ -55,7 +60,11 @@ class Bakapara:
         self.jobs = None
         self.indices = None
         self.finished = set()
-        self.hosts = self.rc[:].apply_async(gethostname)
+        # Obtain the host names and PIDs of engines.
+        self.pids = self.rc[:].apply(os.getpid).get_dict()
+        self.hosts = self.rc[:].apply(socket.getfqdn).get_dict()
+        # Change the working directory of each engine.
+        self.rc[:].apply(os.chdir, os.getcwd())
 
     def run(self, jobs, targets=None):
         """Runs the jobs on the cluster.
@@ -65,7 +74,7 @@ class Bakapara:
             targets (int, list of ints, or 'all'): the engines on which the jobs will run.
 
         Returns:
-            bool: True if successful, False otherwise (other jobs are running).
+            bool: True if successful, False otherwise (e.g., jobs are running).
 
         """
         if self.ar is not None and not self.ar.ready():
@@ -125,6 +134,29 @@ class Bakapara:
         """
         return self.ar is not None and self.ar.successful()
 
+    def abort(self, **args):
+        """Aborts jobs.
+
+        Args: identical to IPython.parallel.client.view.LoadBalancedView.abort()
+        
+        """
+        if self.lview is not None:
+            self.lview.abort()
+
+    def interrupt(self):
+        """Sends SIGINT signal to engines.
+
+        http://mail.scipy.org/pipermail/ipython-dev/2014-March/013426.html
+        """
+        self.abort()
+        for i in self.rc.ids:
+            host = self.hosts[i]
+            pid = self.pids[i]
+            if host == socket.getfqdn():
+                os.kill(pid, signal.SIGINT)
+            else:
+                os.system('ssh {} kill -INT {}'.format(host, pid))
+
     def shutdown(self, **args):
         """Terminates one or more engine processes, optionally including the hub.
 
@@ -135,30 +167,35 @@ class Bakapara:
             return False
         self.lview.shutdown(**args)
             
-    def status(self, interval=1., timeout=-1, fo=sys.stdout, endchr='\n'):
+    def status(self, interval=1., timeout=-1, fo=sys.stdout):
         """Waits for the jobs, printing progress at regular intervals
 
         Args:
             interval (float): a time in seconds, after which to print the progress.
             timeout (float): a time in seconds, after which to give up waiting.
             fo (file): a file object to which the progress is printed.
-            endchr (str): a string to be printed at the end of a progress line.
 
         """
         if self.ar is None:
             return
         if timeout is None:
             timeout = -1
+
+        # Make sure to write the job results into the job objects.
+        self.wait(1e-3)
+
         tic = time.time()
         while not self.ar.ready() and (timeout < 0 or time.time() - tic <= timeout):
             self.wait(interval)
             clear_output(wait=True)
             dt = datetime.timedelta(seconds=self.ar.elapsed)
-            fo.write('{}/{} tasks finished after {}{}'.format(self.ar.progress, len(self.ar), str(dt), endchr))
+            fo.write('{}/{} tasks finished after {}'.format(self.ar.progress, len(self.ar), str(dt)))
             fo.flush()
+        else:
+            fo.write('\n')
         dt = datetime.timedelta(seconds=self.ar.elapsed)
         clear_output(wait=True)
-        fo.write('{} tasks completed in {}{}'.format(len(self.ar), str(dt), endchr))
+        fo.write('{} tasks completed in {}\n'.format(len(self.ar), str(dt)))
         fo.flush()
 
     def __len__(self):
