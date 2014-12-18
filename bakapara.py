@@ -71,7 +71,7 @@ class Bakapara:
 
         Args:
             jobs (list): list of dictionary objects describing the jobs.
-            targets (int, list of ints, or 'all'): the engines on which the jobs will run.
+            targets (int, list of ints, 'all', or None): the engine(s) on which the jobs will run.
 
         Returns:
             bool: True if successful, False otherwise (e.g., jobs are running).
@@ -87,7 +87,7 @@ class Bakapara:
         return True
 
     def wait(self, timeout=1e-3):
-        """Waits for the jobs to complete and writes job results into the job list.
+        """Waits for the jobs to complete and writes job results.
 
         Args:
             timeout (float): a time in seconds, after which to give up.
@@ -122,11 +122,11 @@ class Bakapara:
             self.finished.add(i)
 
     def ready():
-        """Return whether the jobs have completed."""
+        """Returns whether the jobs have completed."""
         return self.ar is not None or self.ar.ready()
 
     def successful():
-        """Return whether the jobs completed without raising an exception.
+        """Returns whether the jobs completed without raising an exception.
 
         Raises:
             AssertionError: the result is not ready.
@@ -144,7 +144,7 @@ class Bakapara:
             self.lview.abort()
 
     def interrupt(self):
-        """Sends SIGINT signal to engines.
+        """Sends SIGINT signal to engines (experimental).
 
         http://mail.scipy.org/pipermail/ipython-dev/2014-March/013426.html
         """
@@ -208,10 +208,6 @@ def main(args=None):
     import logging as lg
     import operator
 
-    fi = sys.stdin
-    fo = sys.stdout
-    fe = sys.stderr
-
     # Parse the command-line arguments.
     parser = argparse.ArgumentParser(
         description="Run jobs on the IPython cluster environment in 'bakapara' manner."
@@ -235,17 +231,13 @@ def main(args=None):
     args = parser.parse_args(args)
 
     # Determine the stream for reading the jobs.
-    if args.input:
-        fi = open(args.input)
+    fi = open(args.input) if args.input else sys.stdin
 
     # Determine the stream for storing the results.
-    if args.output:
-        fo = open(args.output, 'w')
-        fe = sys.stdout
+    fo = open(args.output, 'w') if args.output else sys.stdout
 
     # Determine the stream for storing the logs.
-    if args.logging:
-        fe = open(args.logging, 'w')
+    fe = open(args.logging, 'w') if args.logging else sys.stderr
 
     # Initialize the default logger.
     lg.basicConfig(level=lg.INFO, format='%(asctime)s %(message)s', stream=fe)
@@ -278,6 +270,7 @@ def main(args=None):
 
     lg.info('completed')
     fo.close()
+    fe.close()
 
 if __name__ == '__main__':
     main()
