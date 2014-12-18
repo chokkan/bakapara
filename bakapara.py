@@ -42,7 +42,8 @@ def runjob(job):
 
     # Run the command.
     try:
-        returncode = subprocess.call(job['cmd'], shell=True, stdout=stdout, stderr=stderr)
+        # We force to use '/bin/bash -o pipefail' so that the return value presents the value of the rightmost command to exit with a non-zero status code.
+        returncode = subprocess.call(job['cmd'], shell=True, executable='/bin/bash -o pipefail', stdout=stdout, stderr=stderr)
         return dict(code=returncode)
     except OSError, e:
         return dict(error=str(e))
